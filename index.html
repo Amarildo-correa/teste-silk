@@ -187,6 +187,8 @@
         <div><strong id="c-tecla">0</strong><span>teclas</span></div>
         <div><strong id="c-mouse">0</strong><span>mouse</span></div>
         <div><strong id="c-foco">0</strong><span>focos</span></div>
+        <div><strong id="c-nav">0</strong><span>por nav.</span></div>
+        <div><strong id="c-clq">0</strong><span>por clique</span></div>
       </div>
       <h3>Teclas capturadas</h3>
       <table id="teclas"></table>
@@ -209,7 +211,9 @@
 
 <!-- ============ conteúdo de teste ============ -->
 <div class="instrucao">
-  Se as setas moverem um <b>ponteiro</b>: abra o menu do Silk, escolha <b>“Cursor Navigation”</b> na barra de navegação e troque para <b>“Spatial Navigation”</b>. Depois recarregue e teste de novo.
+  <b>Teste A — normal:</b> este endereço, sem nada no fim.<br>
+  <b>Teste B — conversão:</b> acrescente <b>?modo=foco</b> no fim do endereço. O ponteiro some e o movimento do controle passa a mover o <b>foco</b> entre os cards, como num app de TV.<br>
+  <b>Teste C — sem polyfill:</b> <b>?polyfill=off</b>, para ver se a biblioteca atrapalha.
 </div>
 
 <h2>1. Alvos — tipos diferentes de elemento</h2>
@@ -269,7 +273,12 @@
 
   /* ---------- estado ---------- */
   var nTecla = 0, nMouse = 0, nFoco = 0;
+  var nFocoNav = 0, nFocoClique = 0;
+  var ultimoPonteiroEm = 0;
   var viuTecla = false, viuMouse = false, focoMudou = false;
+
+  /* ?modo=foco — converte o movimento do cursor virtual em navegacao por foco */
+  var MODO_FOCO = location.search.indexOf('modo=foco') !== -1;
   var MAX_LOG = 7;
 
   var elLog = document.getElementById('log');
@@ -320,6 +329,80 @@
     alvo.celula.textContent = 'key=' + ev.key + ' code=' + ev.keyCode;
   }
 
+  /* ---------- MODO FOCO: cursor virtual convertido em navegacao ----------
+     Se o aparelho so oferece cursor, o D-pad ainda produz movimento com
+     direcao. Escondemos o ponteiro, acumulamos o deslocamento e, ao passar
+     de um limiar, movemos o FOCO para o vizinho naquela direcao. O usuario
+     ve foco pulando entre cards, sem ponteiro — como num app de TV. */
+  var accX = 0, accY = 0, ultX = null, ultY = null, ultMove = 0;
+  var LIMIAR = 45;      /* px de deslocamento antes de mover o foco */
+  var INTERVALO = 120;  /* ms minimos entre dois saltos de foco */
+
+  function focaveis() {
+    return Array.prototype.slice.call(document.querySelectorAll('.alvo'));
+  }
+
+  /* fallback geometrico caso o polyfill nao exponha navigate() */
+  function vizinho(dir) {
+    var atual = document.activeElement;
+    var lista = focaveis();
+    if (!atual || lista.indexOf(atual) === -1) { return lista[0] || null; }
+    var r = atual.getBoundingClientRect();
+    var cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    var melhor = null, melhorD = Infinity;
+
+    lista.forEach(function (el) {
+      if (el === atual) { return; }
+      var q = el.getBoundingClientRect();
+      var qx = q.left + q.width / 2, qy = q.top + q.height / 2;
+      var dx = qx - cx, dy = qy - cy;
+      var valido = (dir === 'right' && dx > 8) || (dir === 'left' && dx < -8) ||
+                   (dir === 'down' && dy > 8) || (dir === 'up' && dy < -8);
+      if (!valido) { return; }
+      /* penaliza desvio no eixo transversal, para o salto seguir a direcao */
+      var principal = (dir === 'left' || dir === 'right') ? Math.abs(dx) : Math.abs(dy);
+      var transversal = (dir === 'left' || dir === 'right') ? Math.abs(dy) : Math.abs(dx);
+      var d = principal + transversal * 3;
+      if (d < melhorD) { melhorD = d; melhor = el; }
+    });
+    return melhor;
+  }
+
+  function mover(dir) {
+    if (typeof window.navigate === 'function') {
+      window.navigate(dir);
+      return;
+    }
+    var alvo = vizinho(dir);
+    if (alvo !== null) { alvo.focus(); }
+  }
+
+  function converter(ev) {
+    if (ultX === null) { ultX = ev.clientX; ultY = ev.clientY; return; }
+    accX += ev.clientX - ultX;
+    accY += ev.clientY - ultY;
+    ultX = ev.clientX; ultY = ev.clientY;
+
+    var agora = Date.now();
+    if (agora - ultMove < INTERVALO) { return; }
+
+    var dir = null;
+    if (Math.abs(accX) > Math.abs(accY)) {
+      if (Math.abs(accX) >= LIMIAR) { dir = accX > 0 ? 'right' : 'left'; }
+    } else if (Math.abs(accY) >= LIMIAR) {
+      dir = accY > 0 ? 'down' : 'up';
+    }
+    if (dir === null) { return; }
+
+    accX = 0; accY = 0; ultMove = agora;
+    mover(dir);
+    log('k', 'CONVERTIDO -> ' + dir);
+  }
+
+  if (MODO_FOCO) {
+    document.documentElement.style.cursor = 'none';
+  }
+
   /* ---------- veredito ---------- */
   function veredito() {
     var titulo, detalhe, classe;
@@ -329,8 +412,12 @@
       detalhe = 'Cenário ideal: o browser repassa as setas e o foco anda. Norigin ou polyfill funcionam e ainda dá para controlar o foco por código.';
     } else if (!viuTecla && focoMudou) {
       classe = 'ok';
-      titulo = 'SPATIAL NATIVO — o browser move o foco e nao repassa as setas';
+      titulo = 'SPATIAL NATIVO — o browser move o foco sem repassar as setas';
       detalhe = 'É o modo dos apps de TV. Basta usar elementos focáveis e estilizar :focus; biblioteca de navegação espacial não recebe evento e fica sem função.';
+    } else if (viuMouse && !focoMudou && nFocoClique > 0) {
+      classe = 'alerta';
+      titulo = 'CURSOR VIRTUAL — o foco só muda quando voce clica';
+      detalhe = 'Os ' + nFocoClique + ' focos vieram de clique do ponteiro, nao de navegacao. O D-pad move um cursor. Tente ?modo=foco para converter o movimento do cursor em navegacao por foco.';
     } else if (viuTecla && !focoMudou) {
       classe = 'alerta';
       titulo = 'TECLAS CHEGAM, MAS O FOCO NAO ANDA';
@@ -365,17 +452,29 @@
   var ultMouse = 0;
   document.addEventListener('mousemove', function (ev) {
     nMouse += 1; viuMouse = true;
+    ultimoPonteiroEm = Date.now();
     conta('c-mouse', nMouse);
-    var agora = Date.now();
-    if (agora - ultMouse > 500) {
-      ultMouse = agora;
+    if (MODO_FOCO) { converter(ev); }
+    if (ultimoPonteiroEm - ultMouse > 500) {
+      ultMouse = ultimoPonteiroEm;
       log('m', 'MOUSE  x=' + Math.round(ev.clientX) + ' y=' + Math.round(ev.clientY));
       veredito();
     }
   }, true);
 
-  document.addEventListener('click', function () {
+  document.addEventListener('mousedown', function () { ultimoPonteiroEm = Date.now(); }, true);
+
+  document.addEventListener('click', function (ev) {
+    ultimoPonteiroEm = Date.now();
     log('m', 'CLICK');
+    /* no modo foco o clique vale para o item focado, nao para o que esta sob o cursor */
+    if (MODO_FOCO) {
+      var a = document.activeElement;
+      if (a && a !== document.body && a !== ev.target && a.className === 'alvo') {
+        ev.preventDefault();
+        log('m', 'CLICK redirecionado para ' + a.getAttribute('data-nome'));
+      }
+    }
   }, true);
 
   document.addEventListener('focusin', function (ev) {
@@ -383,10 +482,31 @@
     conta('c-foco', nFoco);
     var nome = ev.target.getAttribute && ev.target.getAttribute('data-nome');
     var desc = (ev.target.tagName || '?').toLowerCase() + (nome ? ' ' + nome : '');
-    /* o 1o focusin e o foco inicial programatico: nao conta como navegacao */
-    if (nFoco > 1) { focoMudou = true; }
-    elFoco.textContent = desc;
-    log('f', 'FOCO  ' + desc);
+
+    /* Discriminacao critica: clicar TAMBEM da foco a um elemento.
+       Contar todo focusin como navegacao produz falso "spatial nativo"
+       num aparelho que so tem cursor. So conta como navegacao quando:
+       - nao e o foco inicial programatico (nFoco > 1), E
+       - nao houve atividade de ponteiro nos ultimos 700ms, E
+       - o elemento casa :focus-visible (o engine classificou como foco
+         de teclado/navegacao, nao de clique). */
+    /* no modo foco, o proprio conversor move o foco logo apos um mousemove:
+       ali o ponteiro e a origem legitima da navegacao, nao um clique */
+    var porPonteiro = !MODO_FOCO && (Date.now() - ultimoPonteiroEm) < 700;
+    var pareceTeclado = true;
+    try { pareceTeclado = ev.target.matches(':focus-visible'); } catch (e) { pareceTeclado = true; }
+
+    if (nFoco > 1 && !porPonteiro && pareceTeclado) {
+      focoMudou = true;
+      nFocoNav += 1;
+    } else if (nFoco > 1) {
+      nFocoClique += 1;
+    }
+    conta('c-nav', nFocoNav);
+    conta('c-clq', nFocoClique);
+
+    elFoco.textContent = desc + (porPonteiro ? '  (por clique)' : '  (por navegacao)');
+    log('f', 'FOCO  ' + desc + (porPonteiro ? '  <clique>' : '  <nav>'));
     veredito();
   }, true);
 
@@ -426,6 +546,7 @@
   linhaAmb('pointer:fine', mq('(pointer: fine)'));
   linhaAmb('pointer:coarse', mq('(pointer: coarse)'));
   var celPoly = linhaAmb('polyfill', statusPolyfill);
+  linhaAmb('modo=foco', MODO_FOCO ? 'sim' : 'nao');
 
   document.getElementById('ua').textContent = navigator.userAgent;
 
