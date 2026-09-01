@@ -1,0 +1,317 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Teste Silk — Navegação por controle remoto</title>
+<style>
+  :root {
+    --color-bg: #000000;
+    --color-accent: #FFE500;
+    --color-fg: #FFFFFF;
+    --color-fg-body: #DEDEDE;
+    --color-fg-subtle: #7A7A7A;
+    --color-ok: #35D07F;
+    --color-danger: #FF3B30;
+    --border-w: 4px;
+    --shadow-offset: calc(var(--border-w) * 2);
+    --safe-x: 5vw;
+    --safe-y: 5vh;
+    --fs-body: 1.5rem;
+    --fs-small: 1.25rem;
+    --fs-h1: 3rem;
+    --fs-h2: 1.75rem;
+    --space-2: 0.5rem;
+    --space-4: 1rem;
+    --space-6: 1.5rem;
+    --space-8: 2rem;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    padding: var(--safe-y) var(--safe-x);
+    background: var(--color-bg);
+    color: var(--color-fg-body);
+    font-family: 'Archivo', system-ui, sans-serif;
+    font-size: var(--fs-body);
+    line-height: 1.5;
+  }
+
+  /* marcadores da safe area de 5% — se sumirem na TV, há overscan */
+  .safe-mark {
+    position: fixed;
+    border: 2px dashed var(--color-accent);
+    pointer-events: none;
+    inset: var(--safe-y) var(--safe-x);
+    z-index: 1;
+  }
+  .safe-label {
+    position: fixed;
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--color-accent);
+    color: #000;
+    font-size: 1rem;
+    font-weight: 700;
+    padding: 0.25rem 0.75rem;
+    z-index: 2;
+  }
+
+  h1 {
+    font-size: var(--fs-h1);
+    margin: 0 0 var(--space-2);
+    color: var(--color-accent);
+    line-height: 1;
+  }
+  h2 {
+    font-size: var(--fs-h2);
+    margin: var(--space-8) 0 var(--space-4);
+    color: var(--color-fg);
+  }
+  p { max-width: 60ch; }
+  .lead { color: var(--color-fg-subtle); font-size: var(--fs-small); margin-top: 0; }
+
+  /* ---- veredito grande, legível a 3 metros ---- */
+  #veredito {
+    border: var(--border-w) solid var(--color-accent);
+    padding: var(--space-6);
+    margin: var(--space-6) 0;
+    font-size: 2rem;
+    font-weight: 700;
+    color: var(--color-accent);
+    min-height: 6rem;
+  }
+  #veredito .detalhe {
+    display: block;
+    font-size: var(--fs-small);
+    font-weight: 400;
+    color: var(--color-fg-body);
+    margin-top: var(--space-2);
+  }
+
+  /* ---- grid de alvos focáveis ---- */
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: var(--space-6);
+    margin-bottom: var(--space-8);
+  }
+  .alvo {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 7rem;
+    font-size: 2rem;
+    font-weight: 700;
+    text-decoration: none;
+    background: transparent;
+    color: var(--color-accent);
+    border: var(--border-w) solid var(--color-accent);
+    box-shadow: none;
+    scroll-margin: var(--safe-y) var(--safe-x);
+    transition: background 120ms, box-shadow 120ms;
+  }
+  /* mesmo tratamento para foco lógico, foco real e cursor virtual */
+  .alvo:focus,
+  .alvo:focus-visible,
+  .alvo:hover {
+    outline: none;
+    background: var(--color-fg);
+    color: #000;
+    border-color: #000;
+    box-shadow: var(--shadow-offset) var(--shadow-offset) 0 0 var(--color-fg);
+  }
+
+  /* ---- painéis de dados ---- */
+  .painel {
+    border: var(--border-w) solid var(--color-fg-subtle);
+    padding: var(--space-4);
+    margin-bottom: var(--space-6);
+  }
+  dl { display: grid; grid-template-columns: max-content 1fr; gap: 0.5rem var(--space-6); margin: 0; }
+  dt { color: var(--color-fg-subtle); font-size: var(--fs-small); }
+  dd { margin: 0; color: var(--color-fg); font-size: var(--fs-small); word-break: break-word; }
+  .ok { color: var(--color-ok); font-weight: 700; }
+  .nao { color: var(--color-danger); font-weight: 700; }
+
+  #contadores { display: flex; gap: var(--space-8); flex-wrap: wrap; }
+  #contadores div { border: var(--border-w) solid var(--color-accent); padding: var(--space-4); min-width: 12rem; }
+  #contadores strong { display: block; font-size: 3rem; color: var(--color-accent); line-height: 1; }
+  #contadores span { font-size: var(--fs-small); color: var(--color-fg-subtle); }
+
+  #log {
+    font-family: ui-monospace, 'Courier New', monospace;
+    font-size: 1.125rem;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    max-height: 22rem;
+    overflow: hidden;
+  }
+  #log li { padding: 0.25rem 0; border-bottom: 1px solid #222; color: var(--color-fg); }
+  #log li.tecla { color: var(--color-ok); }
+  #log li.mouse { color: var(--color-accent); }
+</style>
+</head>
+<body>
+
+<div class="safe-mark" aria-hidden="true"></div>
+<div class="safe-label">limite da safe area (5%) — se esta linha some, a TV tem overscan</div>
+
+<h1>Teste Silk — controle remoto</h1>
+<p class="lead">Pressione as <strong>setas</strong> do controle. O que aparecer abaixo responde se esta TV envia teclas para a página ou move um cursor virtual.</p>
+
+<div id="veredito" role="status" aria-live="polite">
+  Aguardando o primeiro comando do controle…
+  <span class="detalhe">Use as setas, depois OK/Enter e por último Voltar.</span>
+</div>
+
+<h2>1. Alvos de foco</h2>
+<p class="lead">As setas deveriam mover o destaque branco entre as caixas.</p>
+<div class="grid" id="grid"></div>
+
+<h2>2. Contadores</h2>
+<div id="contadores">
+  <div><strong id="c-teclas">0</strong><span>eventos de tecla</span></div>
+  <div><strong id="c-mouse">0</strong><span>eventos de mouse</span></div>
+  <div><strong id="c-clique">0</strong><span>cliques / OK</span></div>
+</div>
+
+<h2>3. Últimos eventos</h2>
+<ul id="log" aria-live="off"></ul>
+
+<h2>4. Ambiente</h2>
+<div class="painel">
+  <dl id="ambiente"></dl>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/spatial-navigation-polyfill@1.1.0/polyfill/spatial-navigation-polyfill.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  const MAX_LOG = 14;
+  let nTeclas = 0;
+  let nMouse = 0;
+  let nClique = 0;
+  let viuTecla = false;
+  let viuMouse = false;
+
+  const elLog = document.getElementById('log');
+  const elVeredito = document.getElementById('veredito');
+  const elGrid = document.getElementById('grid');
+
+  /* ---- alvos focáveis ---- */
+  const rotulos = ['1', '2', '3', '4', '5', '6', '7', '8'];
+  rotulos.forEach(function (txt) {
+    const a = document.createElement('a');
+    a.className = 'alvo';
+    a.href = '#';
+    a.textContent = txt;
+    a.addEventListener('click', function (ev) { ev.preventDefault(); });
+    elGrid.appendChild(a);
+  });
+
+  /* ---- log sem innerHTML ---- */
+  function registrar(classe, texto) {
+    const li = document.createElement('li');
+    li.className = classe;
+    li.textContent = texto;
+    elLog.insertBefore(li, elLog.firstChild);
+    while (elLog.childNodes.length > MAX_LOG) {
+      elLog.removeChild(elLog.lastChild);
+    }
+  }
+
+  function atualizarVeredito() {
+    const titulo = document.createTextNode(
+      viuTecla
+        ? 'ESTA TV ENVIA TECLAS — navegação espacial por JS é viável'
+        : (viuMouse ? 'CURSOR VIRTUAL — o D-pad move um ponteiro, não o foco' : 'Aguardando o primeiro comando do controle…')
+    );
+    const det = document.createElement('span');
+    det.className = 'detalhe';
+    det.textContent = viuTecla
+      ? 'As setas geraram keydown. Norigin / polyfill de navegação espacial vão funcionar aqui.'
+      : (viuMouse
+        ? 'A página só recebe eventos de mouse. Nenhuma biblioteca de navegação espacial recebe as setas: a interface precisa funcionar via :hover.'
+        : 'Use as setas, depois OK/Enter e por último Voltar.');
+
+    while (elVeredito.firstChild) { elVeredito.removeChild(elVeredito.firstChild); }
+    elVeredito.appendChild(titulo);
+    elVeredito.appendChild(det);
+  }
+
+  /* ---- teclado ---- */
+  document.addEventListener('keydown', function (ev) {
+    nTeclas += 1;
+    viuTecla = true;
+    document.getElementById('c-teclas').textContent = String(nTeclas);
+    registrar('tecla', 'KEYDOWN  key=' + ev.key + '  keyCode=' + ev.keyCode + '  code=' + (ev.code || '-'));
+    atualizarVeredito();
+  }, true);
+
+  /* ---- mouse / cursor virtual ---- */
+  let ultimoMouse = 0;
+  document.addEventListener('mousemove', function (ev) {
+    nMouse += 1;
+    viuMouse = true;
+    document.getElementById('c-mouse').textContent = String(nMouse);
+    const agora = Date.now();
+    if (agora - ultimoMouse > 400) {
+      ultimoMouse = agora;
+      registrar('mouse', 'MOUSEMOVE  x=' + Math.round(ev.clientX) + '  y=' + Math.round(ev.clientY));
+      atualizarVeredito();
+    }
+  }, true);
+
+  document.addEventListener('click', function (ev) {
+    nClique += 1;
+    document.getElementById('c-clique').textContent = String(nClique);
+    registrar('mouse', 'CLICK  x=' + Math.round(ev.clientX) + '  y=' + Math.round(ev.clientY));
+  }, true);
+
+  /* ---- ambiente ---- */
+  function suporta(seletor) {
+    try { document.querySelector(seletor); return true; } catch (e) { return false; }
+  }
+  function mq(consulta) {
+    return window.matchMedia && window.matchMedia(consulta).matches ? 'sim' : 'não';
+  }
+
+  const dados = [
+    ['User agent', navigator.userAgent],
+    ['Viewport', window.innerWidth + ' × ' + window.innerHeight + ' CSS px'],
+    ['Tela', (screen.width + ' × ' + screen.height)],
+    ['devicePixelRatio', String(window.devicePixelRatio)],
+    [':focus-visible suportado', suporta(':focus-visible') ? 'sim' : 'não'],
+    ['hover: hover', mq('(hover: hover)')],
+    ['hover: none', mq('(hover: none)')],
+    ['pointer: fine', mq('(pointer: fine)')],
+    ['pointer: coarse', mq('(pointer: coarse)')],
+    ['any-pointer: coarse', mq('(any-pointer: coarse)')],
+    ['Polyfill spatial-nav', (typeof window.navigate === 'function') ? 'carregado' : 'NÃO carregou']
+  ];
+
+  const dl = document.getElementById('ambiente');
+  dados.forEach(function (par) {
+    const dt = document.createElement('dt');
+    dt.textContent = par[0];
+    const dd = document.createElement('dd');
+    dd.textContent = par[1];
+    if (par[1] === 'sim' || par[1] === 'carregado') { dd.className = 'ok'; }
+    if (par[1] === 'não' || par[1] === 'NÃO carregou') { dd.className = 'nao'; }
+    dl.appendChild(dt);
+    dl.appendChild(dd);
+  });
+
+  /* foco inicial no primeiro alvo */
+  const primeiro = document.querySelector('.alvo');
+  if (primeiro !== null) { primeiro.focus(); }
+}());
+</script>
+</body>
+</html>
