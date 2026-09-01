@@ -433,19 +433,58 @@
   /* Pointer Lock: se o Silk aceitar, o ponteiro some de vez e passamos a ler
      movementX/Y puros. Precisa de gesto do usuario, entao vai no 1o clique. */
   var travaTentada = false;
+  function marcar(cel, txt, bom) {
+    cel.textContent = txt;
+    cel.className = bom ? 'sim' : 'nao';
+  }
+
   function tentarTravar() {
     if (!MODO_FOCO || travaTentada) { return; }
     travaTentada = true;
+
+    /* 1o: fullscreen. Alguns engines so concedem pointer lock em tela cheia,
+       e a tela cheia por si ja pode esconder o chrome do browser. */
+    var raiz = document.documentElement;
+    var fs = raiz.requestFullscreen || raiz.webkitRequestFullscreen || raiz.mozRequestFullScreen;
+    if (typeof fs === 'function') {
+      try {
+        var p = fs.call(raiz);
+        if (p && typeof p.then === 'function') {
+          p.then(function () { marcar(celFull, 'ativo', true); })
+           .catch(function (e) { marcar(celFull, 'recusado: ' + (e && e.name), false); });
+        } else {
+          marcar(celFull, 'chamado', true);
+        }
+      } catch (e) { marcar(celFull, 'erro: ' + e.name, false); }
+    } else {
+      marcar(celFull, 'indisponivel', false);
+    }
+
+    /* 2o: pointer lock */
     var alvo = document.body;
     var req = alvo.requestPointerLock || alvo.mozRequestPointerLock || alvo.webkitRequestPointerLock;
-    if (typeof req !== 'function') { celTrava.textContent = 'indisponivel'; celTrava.className = 'nao'; return; }
-    try { req.call(alvo); } catch (e) { celTrava.textContent = 'erro'; celTrava.className = 'nao'; }
+    if (typeof req !== 'function') { marcar(celTrava, 'API ausente', false); return; }
+    marcar(celTrava, 'solicitado…', true);
+    try {
+      var pl = req.call(alvo);
+      /* Chromium moderno devolve Promise; recusa nao lanca excecao sincrona */
+      if (pl && typeof pl.then === 'function') {
+        pl.then(function () { marcar(celTrava, 'ativo', true); })
+          .catch(function (e) { marcar(celTrava, 'recusado: ' + (e && e.name), false); });
+      }
+    } catch (e) {
+      marcar(celTrava, 'erro: ' + e.name, false);
+    }
   }
+
   document.addEventListener('pointerlockchange', function () {
     var travado = document.pointerLockElement === document.body;
-    celTrava.textContent = travado ? 'ativo' : 'recusado';
-    celTrava.className = travado ? 'sim' : 'nao';
-    log('k', 'POINTER LOCK ' + (travado ? 'ativo' : 'recusado'));
+    marcar(celTrava, travado ? 'ATIVO' : 'perdido', travado);
+    log('k', 'POINTER LOCK ' + (travado ? 'ativo' : 'perdido'));
+  });
+  document.addEventListener('pointerlockerror', function () {
+    marcar(celTrava, 'RECUSADO pelo browser', false);
+    log('k', 'POINTER LOCK recusado');
   });
 
   /* ---------- veredito ---------- */
@@ -550,7 +589,14 @@
     var pareceTeclado = true;
     try { pareceTeclado = ev.target.matches(':focus-visible'); } catch (e) { pareceTeclado = true; }
 
-    if (nFoco > 1 && !porPonteiro && pareceTeclado) {
+    /* No modo foco quem move o foco e o conversor, sempre por .focus()
+       programatico — e foco programatico nao casa :focus-visible quando a
+       ultima entrada foi ponteiro. Sem esta excecao, os saltos legitimos
+       eram contados como clique (75 x 12 na medicao anterior). */
+    if (nFoco > 1 && MODO_FOCO) {
+      focoMudou = true;
+      nFocoNav += 1;
+    } else if (nFoco > 1 && !porPonteiro && pareceTeclado) {
       focoMudou = true;
       nFocoNav += 1;
     } else if (nFoco > 1) {
@@ -603,6 +649,7 @@
   linhaAmb('modo=foco', MODO_FOCO ? 'sim' : 'nao');
   linhaAmb('limiar / interv.', LIMIAR + 'px / ' + INTERVALO + 'ms');
   var celTrava = linhaAmb('pointer lock', MODO_FOCO ? 'aguardando clique' : 'nao');
+  var celFull = linhaAmb('fullscreen', MODO_FOCO ? 'aguardando clique' : 'nao');
 
   document.getElementById('ua').textContent = navigator.userAgent;
 
