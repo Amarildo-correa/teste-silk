@@ -156,6 +156,20 @@
   }
   .alvo em { font-size: 0.8125rem; font-style: normal; color: var(--subtle); font-weight: 400; }
 
+  /* ---- modo foco: esconde o ponteiro por todos os meios disponiveis ---- */
+  .modo-foco, .modo-foco * {
+    cursor: url("data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"), none !important;
+  }
+  /* com o ponteiro invisivel, hover destacaria um card diferente do focado:
+     no modo foco o destaque pertence exclusivamente ao :focus */
+  .modo-foco .alvo:hover:not(:focus) {
+    background: transparent;
+    color: var(--accent);
+    border-color: var(--accent);
+    box-shadow: none;
+  }
+  .modo-foco .alvo:hover:not(:focus) em { color: var(--subtle); }
+
   /* mesmo tratamento para foco real e cursor virtual */
   .alvo:focus,
   .alvo:focus-visible,
@@ -335,8 +349,9 @@
      de um limiar, movemos o FOCO para o vizinho naquela direcao. O usuario
      ve foco pulando entre cards, sem ponteiro — como num app de TV. */
   var accX = 0, accY = 0, ultX = null, ultY = null, ultMove = 0;
-  var LIMIAR = 45;      /* px de deslocamento antes de mover o foco */
-  var INTERVALO = 120;  /* ms minimos entre dois saltos de foco */
+  /* calibraveis pela URL: ?limiar=10&intervalo=150 */
+  var LIMIAR = parseInt((location.search.match(/limiar=(\d+)/) || [])[1], 10) || 12;
+  var INTERVALO = parseInt((location.search.match(/intervalo=(\d+)/) || [])[1], 10) || 160;
 
   function focaveis() {
     return Array.prototype.slice.call(document.querySelectorAll('.alvo'));
@@ -378,10 +393,17 @@
   }
 
   function converter(ev) {
-    if (ultX === null) { ultX = ev.clientX; ultY = ev.clientY; return; }
-    accX += ev.clientX - ultX;
-    accY += ev.clientY - ultY;
-    ultX = ev.clientX; ultY = ev.clientY;
+    /* sob pointer lock, clientX/Y congelam e o deslocamento vem em movementX/Y */
+    if (document.pointerLockElement === document.body &&
+        typeof ev.movementX === 'number') {
+      accX += ev.movementX;
+      accY += ev.movementY;
+    } else {
+      if (ultX === null) { ultX = ev.clientX; ultY = ev.clientY; return; }
+      accX += ev.clientX - ultX;
+      accY += ev.clientY - ultY;
+      ultX = ev.clientX; ultY = ev.clientY;
+    }
 
     var agora = Date.now();
     if (agora - ultMove < INTERVALO) { return; }
@@ -399,14 +421,45 @@
     log('k', 'CONVERTIDO -> ' + dir);
   }
 
+  /* Esconder o ponteiro. `cursor: none` no html nao basta: o cursor do Silk e
+     desenhado sobre a pagina e cada elemento reafirma o proprio cursor. Por
+     isso a classe entra no <html>, vale para "*" com !important, e ainda usa
+     um GIF 1x1 transparente — alguns engines ignoram `none` mas respeitam uma
+     imagem de cursor vazia. */
   if (MODO_FOCO) {
-    document.documentElement.style.cursor = 'none';
+    document.documentElement.className = 'modo-foco';
   }
+
+  /* Pointer Lock: se o Silk aceitar, o ponteiro some de vez e passamos a ler
+     movementX/Y puros. Precisa de gesto do usuario, entao vai no 1o clique. */
+  var travaTentada = false;
+  function tentarTravar() {
+    if (!MODO_FOCO || travaTentada) { return; }
+    travaTentada = true;
+    var alvo = document.body;
+    var req = alvo.requestPointerLock || alvo.mozRequestPointerLock || alvo.webkitRequestPointerLock;
+    if (typeof req !== 'function') { celTrava.textContent = 'indisponivel'; celTrava.className = 'nao'; return; }
+    try { req.call(alvo); } catch (e) { celTrava.textContent = 'erro'; celTrava.className = 'nao'; }
+  }
+  document.addEventListener('pointerlockchange', function () {
+    var travado = document.pointerLockElement === document.body;
+    celTrava.textContent = travado ? 'ativo' : 'recusado';
+    celTrava.className = travado ? 'sim' : 'nao';
+    log('k', 'POINTER LOCK ' + (travado ? 'ativo' : 'recusado'));
+  });
 
   /* ---------- veredito ---------- */
   function veredito() {
     var titulo, detalhe, classe;
-    if (viuTecla && focoMudou) {
+    if (MODO_FOCO && focoMudou) {
+      classe = 'ok';
+      titulo = 'CONVERSAO ATIVA — cursor virado em navegacao por foco';
+      detalhe = 'O movimento do D-pad esta sendo convertido em saltos de foco (' + nFocoNav + ' ate agora). Calibre com ?limiar=N (menor = mais sensivel) e ?intervalo=N.';
+    } else if (MODO_FOCO) {
+      classe = 'alerta';
+      titulo = 'CONVERSAO LIGADA, AGUARDANDO MOVIMENTO';
+      detalhe = 'Mova o controle. Se o foco nao saltar, aumente a sensibilidade com ?modo=foco&limiar=8.';
+    } else if (viuTecla && focoMudou) {
       classe = 'ok';
       titulo = 'TECLAS NA PÁGINA + FOCO SE MOVE';
       detalhe = 'Cenário ideal: o browser repassa as setas e o foco anda. Norigin ou polyfill funcionam e ainda dá para controlar o foco por código.';
@@ -467,6 +520,7 @@
   document.addEventListener('click', function (ev) {
     ultimoPonteiroEm = Date.now();
     log('m', 'CLICK');
+    tentarTravar();
     /* no modo foco o clique vale para o item focado, nao para o que esta sob o cursor */
     if (MODO_FOCO) {
       var a = document.activeElement;
@@ -547,6 +601,8 @@
   linhaAmb('pointer:coarse', mq('(pointer: coarse)'));
   var celPoly = linhaAmb('polyfill', statusPolyfill);
   linhaAmb('modo=foco', MODO_FOCO ? 'sim' : 'nao');
+  linhaAmb('limiar / interv.', LIMIAR + 'px / ' + INTERVALO + 'ms');
+  var celTrava = linhaAmb('pointer lock', MODO_FOCO ? 'aguardando clique' : 'nao');
 
   document.getElementById('ua').textContent = navigator.userAgent;
 
